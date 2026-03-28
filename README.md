@@ -2,6 +2,8 @@
 
 Automates daily summaries of 游庭皓的財經皓角 via RSS → Whisper → Claude → Email/Slack.
 
+Pipeline: **RSS feed** → **download audio** → **speed up 1.25x** → **Whisper transcription** → **Claude summary** → **Email / Slack / local file**
+
 ---
 
 ## 1. Prerequisites
@@ -12,6 +14,14 @@ python3 --version
 
 # Install dependencies
 pip install feedparser openai anthropic requests python-dotenv
+
+# ffmpeg (required for audio processing)
+# macOS
+brew install ffmpeg
+# Windows
+winget install ffmpeg
+# Ubuntu/Debian
+sudo apt-get install -y ffmpeg
 ```
 
 ---
@@ -22,8 +32,10 @@ You need two API keys:
 
 | Key | Purpose | Get it at |
 |-----|---------|-----------|
-| `OPENAI_API_KEY` | Whisper transcription (~NT$0.5/episode) | platform.openai.com |
-| `ANTHROPIC_API_KEY` | Claude summarization (~NT$0.3/episode) | console.anthropic.com |
+| `OPENAI_API_KEY` | Whisper transcription | platform.openai.com |
+| `ANTHROPIC_API_KEY` | Claude summarization | console.anthropic.com |
+
+> Note: Both require billing to be set up — free tier has $0 quota.
 
 ---
 
@@ -56,14 +68,51 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ## 4. Test it manually
 
 ```bash
-python3 podcast_summarizer.py
+python podcast_summarizer.py
 ```
 
 It will print the summary to your terminal and send it to email/Slack if configured.
 
+### Resume from an existing transcript
+
+If you already have a transcript saved and want to re-run just the summarization step (skipping download and Whisper):
+
+```bash
+python podcast_summarizer.py --transcript output/2026-03-27/transcript.txt
+```
+
 ---
 
-## 5. Schedule it daily with cron (macOS / Linux)
+## 5. Output files
+
+Each run creates a dated folder under `output/`:
+
+```
+output/
+└── 2026-03-27/
+    ├── audio_fast.mp3   ← sped-up + compressed audio sent to Whisper
+    ├── transcript.txt   ← raw Whisper transcript
+    └── summary.txt      ← final Claude summary
+```
+
+---
+
+## 6. Cost logging
+
+After each run the script prints the actual cost:
+
+```
+   Audio duration    : 26.3 min
+   Whisper cost      : $0.1578 USD
+
+   Input tokens  : 4821
+   Output tokens : 612
+   Claude cost   : $0.0238 USD
+```
+
+---
+
+## 7. Schedule it daily with cron (macOS / Linux)
 
 The podcast airs at **08:30 Taiwan time** (UTC+8). Set the cron to run at ~09:15 TW time to ensure the episode is uploaded:
 
@@ -85,7 +134,7 @@ tail -f /tmp/podcast_cron.log
 
 ---
 
-## 6. Schedule on Windows (Task Scheduler)
+## 8. Schedule on Windows (Task Scheduler)
 
 1. Open Task Scheduler → Create Basic Task
 2. Trigger: Daily, 09:15 (or adjust for your timezone)
@@ -96,7 +145,7 @@ tail -f /tmp/podcast_cron.log
 
 ---
 
-## 7. Run in the cloud (free options)
+## 9. Run in the cloud (free options)
 
 If you want it to run even when your laptop is off:
 
@@ -118,6 +167,8 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+      - name: Install ffmpeg
+        run: sudo apt-get install -y ffmpeg
       - run: pip install feedparser openai anthropic requests python-dotenv
       - run: python podcast_summarizer.py
         env:
@@ -133,17 +184,19 @@ Add your keys in: GitHub repo → Settings → Secrets → Actions.
 
 ---
 
-## 8. Estimated cost per month
+## 10. Estimated cost per month
+
+With 1.25x speed-up and 48kbps compression applied before transcription:
 
 | Item | Cost |
 |------|------|
-| Whisper (~30 min audio/day × 22 days) | ~$1.50 USD |
-| Claude API (1500 tokens × 22 days) | ~$0.50 USD |
-| **Total** | **~$2 USD/month** |
+| Whisper (~26 min audio/day × 22 days) | ~$3.50 USD |
+| Claude Sonnet (~5k tokens/day × 22 days) | ~$0.50 USD |
+| **Total** | **~$4 USD/month** |
 
 ---
 
-## 9. Output example
+## 11. Output example
 
 ```
 📻 財經皓角摘要 2026-03-28 — 2026/3/28(五)台股大跌...

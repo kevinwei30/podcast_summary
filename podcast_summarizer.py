@@ -27,7 +27,9 @@ import os
 import sys
 import time
 import calendar
+import argparse
 import tempfile
+import subprocess
 import smtplib
 import requests
 import feedparser
@@ -54,7 +56,7 @@ GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 
 # How far back (in hours) to look for "today's" episode
-RECENCY_HOURS = 30
+RECENCY_HOURS = 60
 
 # ─── STEP 1: FETCH LATEST EPISODE FROM RSS ───────────────────────────────────
 
@@ -114,7 +116,45 @@ def download_audio(url: str, dest_path: str):
     print(f"   Done ({size_mb:.1f} MB)")
 
 
+# ─── STEP 2b: SPEED UP AUDIO ─────────────────────────────────────────────────
+
+AUDIO_SPEED = 1.25  # speeds up audio to reduce Whisper cost
+
+def speed_up_audio(input_path: str) -> str:
+    """Return path to a sped-up copy of the audio file using ffmpeg."""
+    output_path = input_path.replace(".mp3", "_fast.mp3")
+    print(f"⏩ Speeding up audio {AUDIO_SPEED}x with ffmpeg…")
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", input_path,
+            "-filter:a", f"atempo={AUDIO_SPEED}",
+            "-b:a", "48k",  # reduce bitrate to keep file under 25MB limit
+            "-vn", output_path,
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    size_mb = Path(output_path).stat().st_size / 1024 / 1024
+    print(f"   Done ({size_mb:.1f} MB)")
+    return output_path
+
+
 # ─── STEP 3: TRANSCRIBE WITH WHISPER ─────────────────────────────────────────
+
+def get_audio_duration_seconds(audio_path: str) -> float:
+    """Return audio duration in seconds using ffprobe."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            audio_path,
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    return float(result.stdout.strip())
+
 
 def transcribe(audio_path: str) -> str:
     import openai
@@ -127,7 +167,12 @@ def transcribe(audio_path: str) -> str:
             language="zh",   # Chinese – speeds up recognition
             response_format="text",
         )
-    print(f"   Transcript length: {len(result)} chars")
+    duration_sec = get_audio_duration_seconds(audio_path)
+    duration_min = duration_sec / 60
+    cost_usd = (duration_sec / 60) * 0.006
+    print(f"   Transcript length : {len(result)} chars")
+    print(f"   Audio duration    : {duration_min:.1f} min")
+    print(f"   Whisper cost      : ${cost_usd:.4f} USD")
     return result
 
 
@@ -158,7 +203,7 @@ def summarize(transcript: str, episode_title: str) -> str:
     print("🤖 Summarizing with Claude…")
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1500,
+        max_tokens=4096,
         messages=[
             {
                 "role": "user",
@@ -169,6 +214,12 @@ def summarize(transcript: str, episode_title: str) -> str:
             }
         ],
     )
+    input_tokens  = message.usage.input_tokens
+    output_tokens = message.usage.output_tokens
+    cost_usd = (input_tokens / 1_000_000 * 3) + (output_tokens / 1_000_000 * 15)
+    print(f"   Input tokens  : {input_tokens}")
+    print(f"   Output tokens : {output_tokens}")
+    print(f"   Claude cost   : ${cost_usd:.4f} USD")
     return message.content[0].text
 
 
@@ -204,58 +255,125 @@ def send_slack(text: str):
         print(f"   Slack delivery failed (HTTP {resp.status_code}: {resp.text})")
 
 
+# ─── LOGGING ─────────────────────────────────────────────────────────────────
+
+class Tee:
+    """Write to both stdout and a log file simultaneously."""
+    def __init__(self, log_path: Path):
+        self._stdout = sys.stdout
+        self._file = log_path.open("w", encoding="utf-8")
+        sys.stdout = self
+
+    def write(self, data):
+        self._stdout.write(data)
+        self._file.write(data)
+
+    def flush(self):
+        self._stdout.flush()
+        self._file.flush()
+
+    def close(self, final_path: Path = None):
+        sys.stdout = self._stdout
+        self._file.close()
+        if final_path and final_path != self._file.name:
+            Path(self._file.name).rename(final_path)
+
+
 # ─── MAIN ────────────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--transcript", help="Path to existing transcript.txt to skip download/transcription")
+    args = parser.parse_args()
+
+    # Start logging — write to a temp file until we know the episode output folder
+    Path("output").mkdir(exist_ok=True)
+    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    temp_log = Path(f"output/run_{run_ts}.log")
+    tee = Tee(temp_log)
+
     print("=" * 60)
     print("  財經皓角 Daily Summarizer")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
-    # 1. Get latest episode
-    episode = get_latest_episode(RSS_FEED_URL)
-    if not episode:
-        print("✅ No new episode today. Exiting.")
-        sys.exit(0)
+    if args.transcript:
+        # Resume from existing transcript
 
-    print(f"\n📻 Episode: {episode['title']}")
-    print(f"   Date   : {episode['published']}")
-    print(f"   Audio  : {episode['audio_url'][:80]}…")
+        transcript_path = Path(args.transcript)
+        transcript = transcript_path.read_text(encoding="utf-8")
+        out_dir = transcript_path.parent
+        date_str = out_dir.name
+        episode_title = date_str  # no RSS data available in this mode
+        print(f"\n📄 Loaded transcript from {transcript_path} ({len(transcript)} chars)")
+    else:
+        # 1. Get latest episode
+        episode = get_latest_episode(RSS_FEED_URL)
+        if not episode:
+            print("✅ No new episode today. Exiting.")
+            tee.close()
+            sys.exit(0)
 
-    # 2. Download audio to a temp file
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-        audio_path = tmp.name
+        print(f"\n📻 Episode: {episode['title']}")
+        print(f"   Date   : {episode['published']}")
+        print(f"   Audio  : {episode['audio_url'][:80]}…")
 
-    try:
-        download_audio(episode["audio_url"], audio_path)
+        # Create output folder for this episode
+        out_dir = Path(f"output/{episode['published']}")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\n📁 Output folder: {out_dir}")
 
-        # 3. Transcribe
-        transcript = transcribe(audio_path)
+        # 2. Download audio to a temp file
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            audio_path = tmp.name
 
-        # 4. Summarize
-        summary = summarize(transcript, episode["title"])
+        fast_path = None
+        try:
+            download_audio(episode["audio_url"], audio_path)
 
-        # 5. Build output
-        subject = f"📻 財經皓角摘要 {episode['published']} — {episode['title']}"
-        full_output = f"{subject}\n\n{summary}"
+            # 2b. Speed up audio — save to output folder
+            fast_path = speed_up_audio(audio_path)
+            audio_out = out_dir / "audio_fast.mp3"
+            Path(fast_path).rename(audio_out)
+            fast_path = str(audio_out)
+            print(f"   Saved → {audio_out}")
 
-        print("\n" + "─" * 60)
-        print(full_output)
-        print("─" * 60)
+            # 3. Transcribe — save transcript
+            transcript = transcribe(fast_path)
+            transcript_out = out_dir / "transcript.txt"
+            transcript_out.write_text(transcript, encoding="utf-8")
+            print(f"   Saved → {transcript_out}")
 
-        # 6. Deliver
-        send_email(subject, summary)
-        send_slack(full_output)
+        finally:
+            Path(audio_path).unlink(missing_ok=True)
 
-        # Save locally too
-        out_file = f"summary_{episode['published']}.txt"
-        Path(out_file).write_text(full_output, encoding="utf-8")
-        print(f"\n💾 Saved to {out_file}")
+        date_str = episode["published"]
+        episode_title = episode["title"]
 
-    finally:
-        Path(audio_path).unlink(missing_ok=True)
+    # 4. Summarize
+    summary = summarize(transcript, episode_title)
+
+    # 5. Build output
+    subject = f"📻 財經皓角摘要 {date_str} — {episode_title}"
+    full_output = f"{subject}\n\n{summary}"
+
+    print("\n" + "─" * 60)
+    print(full_output)
+    print("─" * 60)
+
+    # 6. Deliver
+    send_email(subject, summary)
+    send_slack(full_output)
+
+    # Save summary to output folder
+    summary_out = out_dir / "summary.txt"
+    summary_out.write_text(full_output, encoding="utf-8")
+    print(f"\n💾 Saved → {summary_out}")
 
     print("\n✅ Done!")
+
+    tee.close(final_path=out_dir / "run.log")
+    print(f"📋 Log saved → {out_dir / 'run.log'}")
 
 
 if __name__ == "__main__":
