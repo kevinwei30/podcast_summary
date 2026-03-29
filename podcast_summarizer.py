@@ -59,7 +59,7 @@ GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 SLACK_WEBHOOK_URL  = os.getenv("SLACK_WEBHOOK_URL")
 
 # How far back (in hours) to look for "today's" episode
-RECENCY_HOURS = 60
+RECENCY_HOURS = 30
 
 # ─── STEP 1: FETCH LATEST EPISODE FROM RSS ───────────────────────────────────
 

@@ -2,7 +2,7 @@ name: Daily Podcast Summary
 
 on:
   schedule:
-    - cron: '15 1 * * 1-5'  # 09:15 Asia/Taipei (UTC+8), Mon-Fri
+    - cron: '30 1 * * 1-5'  # 09:30 Asia/Taipei (UTC+8), Mon-Fri
   workflow_dispatch:          # Allow manual trigger from GitHub UI
 
 jobs:
