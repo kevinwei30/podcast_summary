@@ -12,7 +12,8 @@ Flow:
   5. Deliver summary (Gmail / Slack / print to console)
 
 Requirements:
-  pip install feedparser openai anthropic requests python-dotenv
+  pip install feedparser openai anthropic requests python-dotenv playwright
+  playwright install chromium
 
 Environment variables (put in .env file):
   OPENAI_API_KEY      – for Whisper transcription
@@ -36,6 +37,7 @@ import feedparser
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
 from pathlib import Path
 
 try:
@@ -224,21 +226,109 @@ def summarize(transcript: str, episode_title: str) -> str:
     return message.content[0].text
 
 
+# ─── STEP 5: GENERATE INFOGRAPHIC ────────────────────────────────────────────
+
+INFOGRAPHIC_PROMPT = """\
+你是一位專業的網頁設計師。請根據以下財經podcast摘要，生成一個適合 Instagram 發布的單頁資訊圖表 HTML。
+
+設計規格：
+- 尺寸：1080×1350px（Instagram 直式比例）
+- 風格：深色金融主題（深藍/深灰背景，金色/白色文字）
+- 字型：使用 Google Fonts Noto Sans TC（支援繁體中文）
+- 版面：由上至下分為以下區塊
+
+版面結構：
+1. 頂部 Header：「財經皓角」標題 + 集數標題（較小字）+ 日期
+2. 📌 今日重點：3-5 個重點 bullet points
+3. 📊 市場動態：指數、個股等數據（漲用綠色，跌用紅色）
+4. 💡 核心觀點：主持人觀點 1-2 句
+5. ⚠️ 風險關注：1-2 個需注意事項
+6. 底部 Footer：「游庭皓的財經皓角」小字
+
+技術要求：
+- 完整的 HTML 文件，包含所有 CSS（inline 或 <style> 標籤）
+- 使用 @import 載入 Google Fonts
+- 固定寬度 1080px，高度 1350px，overflow: hidden
+- CSS 請保持簡潔，避免過多裝飾性元素，以確保內容完整輸出
+- 只回傳 HTML 程式碼，不要加任何說明文字
+
+摘要內容：
+---
+{summary}
+---
+
+集數標題：{episode_title}
+日期：{date_str}
+"""
+
+def generate_infographic(summary: str, episode_title: str, date_str: str, out_dir: Path) -> Path:
+    import anthropic
+    from playwright.sync_api import sync_playwright
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    print("🎨 Generating infographic HTML with Claude…")
+    message = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=8096,
+        messages=[{
+            "role": "user",
+            "content": INFOGRAPHIC_PROMPT.format(
+                summary=summary,
+                episode_title=episode_title,
+                date_str=date_str,
+            ),
+        }],
+    )
+    input_tokens  = message.usage.input_tokens
+    output_tokens = message.usage.output_tokens
+    cost_usd = (input_tokens / 1_000_000 * 3) + (output_tokens / 1_000_000 * 15)
+    print(f"   Input tokens  : {input_tokens}")
+    print(f"   Output tokens : {output_tokens}")
+    print(f"   Claude cost   : ${cost_usd:.4f} USD")
+    html = message.content[0].text.strip()
+    # Strip markdown code fences if Claude wrapped the HTML
+    if html.startswith("```"):
+        html = html.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+    html_path = out_dir / "infographic.html"
+    html_path.write_text(html, encoding="utf-8")
+
+    print("📸 Rendering infographic with Playwright…")
+    png_path = out_dir / "infographic.png"
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={"width": 1080, "height": 1350})
+        page.set_content(html, wait_until="networkidle")
+        page.screenshot(path=str(png_path), clip={"x": 0, "y": 0, "width": 1080, "height": 1350})
+        browser.close()
+
+    size_kb = png_path.stat().st_size / 1024
+    print(f"   Saved → {png_path} ({size_kb:.0f} KB)")
+    return png_path
+
+
 # ─── STEP 5: DELIVER SUMMARY ─────────────────────────────────────────────────
 
-def send_email(subject: str, body: str):
+def send_email(subject: str, body: str, image_path: Path = None):
     if not all([GMAIL_FROM, GMAIL_TO, GMAIL_APP_PASSWORD]):
         print("📧 Email skipped (GMAIL_* env vars not set)")
         return
     recipients = [r.strip() for r in GMAIL_TO.split(",")]
     print(f"📧 Sending email to {', '.join(recipients)}…")
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"]    = f"{GMAIL_DISPLAY_NAME} <{GMAIL_FROM}>"
     msg["To"]      = ", ".join(recipients)
     html_body = body.replace("\n", "<br>")
-    msg.attach(MIMEText(body, "plain", "utf-8"))
-    msg.attach(MIMEText(f"<html><body style='font-family:sans-serif'>{html_body}</body></html>", "html", "utf-8"))
+    body_part = MIMEMultipart("alternative")
+    body_part.attach(MIMEText(body, "plain", "utf-8"))
+    body_part.attach(MIMEText(f"<html><body style='font-family:sans-serif'>{html_body}</body></html>", "html", "utf-8"))
+    msg.attach(body_part)
+    if image_path and image_path.exists():
+        with open(image_path, "rb") as f:
+            img = MIMEImage(f.read(), name=image_path.name)
+        msg.attach(img)
+        print(f"   Attached → {image_path.name}")
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(GMAIL_FROM, GMAIL_APP_PASSWORD)
         server.sendmail(GMAIL_FROM, recipients, msg.as_string())
@@ -301,107 +391,89 @@ def main():
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
+    # ── Stage 1: resolve transcript, summary, episode metadata ──────────────
     if args.summary:
-        # Deliver from existing summary — skip everything else
         summary_path = Path(args.summary)
-        full_output = summary_path.read_text(encoding="utf-8")
-        # First line is the subject, rest is the body
-        lines = full_output.split("\n", 1)
-        subject = lines[0].strip()
-        summary = lines[1].strip() if len(lines) > 1 else full_output
         out_dir = summary_path.parent
+        full_output = summary_path.read_text(encoding="utf-8")
+        subject, summary = full_output.split("\n", 1)
+        subject = subject.strip()
+        summary = summary.strip()
+        episode_title = subject.split(" — ", 1)[-1].strip() if " — " in subject else out_dir.name
+        date_str = out_dir.name
         print(f"\n📄 Loaded summary from {summary_path}")
-        print("\n" + "─" * 60)
-        print(full_output)
-        print("─" * 60)
-        send_email(subject, summary)
-        send_slack(full_output)
-        print("\n✅ Done!")
-        tee.close(final_path=out_dir / "run.log")
-        return
 
-    if args.transcript:
-        # Resume from existing transcript
-
+    elif args.transcript:
         transcript_path = Path(args.transcript)
-        transcript = transcript_path.read_text(encoding="utf-8")
         out_dir = transcript_path.parent
         date_str = out_dir.name
-        # Try to recover episode title from existing summary.txt
+        transcript = transcript_path.read_text(encoding="utf-8")
         existing_summary = out_dir / "summary.txt"
         if existing_summary.exists():
             first_line = existing_summary.read_text(encoding="utf-8").split("\n", 1)[0]
-            # Subject format: "📻 財經皓角摘要 YYYY-MM-DD — <title>"
             episode_title = first_line.split(" — ", 1)[-1].strip() if " — " in first_line else date_str
         else:
             episode_title = date_str
         print(f"\n📄 Loaded transcript from {transcript_path} ({len(transcript)} chars)")
+        summary = None  # will be generated below
+
     else:
-        # 1. Get latest episode
         episode = get_latest_episode(RSS_FEED_URL)
         if not episode:
             print("✅ No new episode today. Exiting.")
             tee.close()
             sys.exit(0)
-
-        print(f"\n📻 Episode: {episode['title']}")
-        print(f"   Date   : {episode['published']}")
-        print(f"   Audio  : {episode['audio_url'][:80]}…")
-
-        # Create output folder for this episode
-        out_dir = Path(f"output/{episode['published']}")
+        date_str = episode["published"]
+        episode_title = episode["title"]
+        out_dir = Path(f"output/{date_str}")
         out_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\n📻 Episode : {episode_title}")
+        print(f"   Date    : {date_str}")
+        print(f"   Audio   : {episode['audio_url'][:80]}…")
         print(f"\n📁 Output folder: {out_dir}")
 
-        # 2. Download audio to a temp file
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             audio_path = tmp.name
-
-        fast_path = None
         try:
             download_audio(episode["audio_url"], audio_path)
-
-            # 2b. Speed up audio — save to output folder
             fast_path = speed_up_audio(audio_path)
             audio_out = out_dir / "audio_fast.mp3"
             Path(fast_path).rename(audio_out)
-            fast_path = str(audio_out)
             print(f"   Saved → {audio_out}")
-
-            # 3. Transcribe — save transcript
-            transcript = transcribe(fast_path)
+            transcript = transcribe(str(audio_out))
             transcript_out = out_dir / "transcript.txt"
             transcript_out.write_text(transcript, encoding="utf-8")
             print(f"   Saved → {transcript_out}")
-
         finally:
             Path(audio_path).unlink(missing_ok=True)
+        summary = None  # will be generated below
 
-        date_str = episode["published"]
-        episode_title = episode["title"]
+    # ── Stage 2: summarize (skipped when resuming from --summary) ────────────
+    if summary is None:
+        summary = summarize(transcript, episode_title)
+        subject = f"📻 財經皓角摘要 — {episode_title}"
+        full_output = f"{subject}\n\n{summary}"
+        summary_out = out_dir / "summary.txt"
+        summary_out.write_text(full_output, encoding="utf-8")
+        print(f"\n💾 Saved → {summary_out}")
 
-    # 4. Summarize
-    summary = summarize(transcript, episode_title)
-
-    # 5. Build output
-    subject = f"📻 財經皓角摘要 — {episode_title}"
-    full_output = f"{subject}\n\n{summary}"
-
+    preview = "\n".join(full_output.splitlines()[:10])
     print("\n" + "─" * 60)
-    print(full_output)
+    print(preview)
+    print("…  (full summary saved to summary.txt)")
     print("─" * 60)
 
-    # 6. Deliver
-    send_email(subject, summary)
+    # ── Stage 3: infographic ─────────────────────────────────────────────────
+    if (out_dir / "infographic.png").exists():
+        print("🎨 Infographic already exists, skipping generation.")
+    else:
+        generate_infographic(summary, episode_title, date_str, out_dir)
+
+    # ── Stage 4: deliver ─────────────────────────────────────────────────────
+    send_email(subject, summary, image_path=out_dir / "infographic.png")
     send_slack(full_output)
 
-    # Save summary to output folder
-    summary_out = out_dir / "summary.txt"
-    summary_out.write_text(full_output, encoding="utf-8")
-    print(f"\n💾 Saved → {summary_out}")
-
     print("\n✅ Done!")
-
     tee.close(final_path=out_dir / "run.log")
     print(f"📋 Log saved → {out_dir / 'run.log'}")
 

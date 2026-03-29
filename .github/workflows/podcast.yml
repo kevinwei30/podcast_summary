@@ -19,7 +19,9 @@ jobs:
         run: sudo apt-get install -y ffmpeg
 
       - name: Install dependencies
-        run: pip install feedparser openai anthropic requests python-dotenv
+        run: pip install feedparser openai anthropic requests python-dotenv playwright
+      - name: Install Playwright browser
+        run: playwright install chromium
 
       - name: Run summarizer
         run: python podcast_summarizer.py
@@ -29,4 +31,5 @@ jobs:
           GMAIL_FROM: ${{ secrets.GMAIL_FROM }}
           GMAIL_TO: ${{ secrets.GMAIL_TO }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_DISPLAY_NAME: ${{ secrets.GMAIL_DISPLAY_NAME }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

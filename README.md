@@ -2,7 +2,7 @@
 
 Automates daily summaries of 游庭皓的財經皓角 via RSS → Whisper → Claude → Email/Slack.
 
-Pipeline: **RSS feed** → **download audio** → **speed up 1.25x** → **Whisper transcription** → **Claude summary** → **Email / Slack / local file**
+Pipeline: **RSS feed** → **download audio** → **speed up 1.25x** → **Whisper transcription** → **Claude summary** → **Claude infographic** → **Email (with PNG) / Slack / local files**
 
 ---
 
@@ -13,7 +13,8 @@ Pipeline: **RSS feed** → **download audio** → **speed up 1.25x** → **Whisp
 python3 --version
 
 # Install dependencies
-pip install feedparser openai anthropic requests python-dotenv
+pip install feedparser openai anthropic requests python-dotenv playwright
+playwright install chromium
 
 # ffmpeg (required for audio processing)
 # macOS
@@ -33,7 +34,7 @@ You need two API keys:
 | Key | Purpose | Get it at |
 |-----|---------|-----------|
 | `OPENAI_API_KEY` | Whisper transcription | platform.openai.com |
-| `ANTHROPIC_API_KEY` | Claude summarization | console.anthropic.com |
+| `ANTHROPIC_API_KEY` | Claude summarization + infographic | console.anthropic.com |
 
 > Note: Both require billing to be set up — free tier has $0 quota.
 
@@ -50,8 +51,9 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 # Optional: Email delivery
 GMAIL_FROM=yourname@gmail.com
-GMAIL_TO=yourname@gmail.com
-GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx   # Gmail App Password (not your login password)
+GMAIL_TO=friend1@gmail.com,friend2@gmail.com   # comma-separated for multiple recipients
+GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx         # Gmail App Password (not your login password)
+GMAIL_DISPLAY_NAME=財經皓角摘要                 # sender display name (default: 財經皓角摘要)
 
 # Optional: Slack delivery
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
@@ -65,21 +67,24 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 
 ---
 
-## 4. Test it manually
+## 4. Usage
 
+### Full run (fetch → transcribe → summarize → infographic → deliver)
 ```bash
 python podcast_summarizer.py
 ```
 
-It will print the summary to your terminal and send it to email/Slack if configured.
-
-### Resume from an existing transcript
-
-If you already have a transcript saved and want to re-run just the summarization step (skipping download and Whisper):
-
+### Resume from saved transcript (skips download + Whisper)
 ```bash
 python podcast_summarizer.py --transcript output/2026-03-27/transcript.txt
 ```
+
+### Resend from saved summary (skips everything except deliver)
+```bash
+python podcast_summarizer.py --summary output/2026-03-27/summary.txt
+```
+
+> The infographic is only generated once per episode. If `infographic.png` already exists in the output folder, it is reused — no extra API cost.
 
 ---
 
@@ -90,16 +95,19 @@ Each run creates a dated folder under `output/`:
 ```
 output/
 └── 2026-03-27/
-    ├── audio_fast.mp3   ← sped-up + compressed audio sent to Whisper
-    ├── transcript.txt   ← raw Whisper transcript
-    └── summary.txt      ← final Claude summary
+    ├── audio_fast.mp3    ← sped-up + compressed audio sent to Whisper
+    ├── transcript.txt    ← raw Whisper transcript
+    ├── summary.txt       ← full Claude summary (subject on line 1, body below)
+    ├── infographic.png   ← 1080×1350px Instagram-ready card
+    ├── infographic.html  ← source HTML for the infographic
+    └── run.log           ← full console output for this run
 ```
 
 ---
 
 ## 6. Cost logging
 
-After each run the script prints the actual cost:
+After each run the script prints the actual cost for every API call:
 
 ```
    Audio duration    : 26.3 min
@@ -107,7 +115,11 @@ After each run the script prints the actual cost:
 
    Input tokens  : 4821
    Output tokens : 612
-   Claude cost   : $0.0238 USD
+   Claude cost   : $0.0238 USD   ← summary
+
+   Input tokens  : 2105
+   Output tokens : 3840
+   Claude cost   : $0.0643 USD   ← infographic
 ```
 
 ---
@@ -169,7 +181,8 @@ jobs:
           python-version: '3.11'
       - name: Install ffmpeg
         run: sudo apt-get install -y ffmpeg
-      - run: pip install feedparser openai anthropic requests python-dotenv
+      - run: pip install feedparser openai anthropic requests python-dotenv playwright
+      - run: playwright install chromium
       - run: python podcast_summarizer.py
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -177,6 +190,7 @@ jobs:
           GMAIL_FROM: ${{ secrets.GMAIL_FROM }}
           GMAIL_TO: ${{ secrets.GMAIL_TO }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_DISPLAY_NAME: ${{ secrets.GMAIL_DISPLAY_NAME }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 ```
 
@@ -191,15 +205,16 @@ With 1.25x speed-up and 48kbps compression applied before transcription:
 | Item | Cost |
 |------|------|
 | Whisper (~26 min audio/day × 22 days) | ~$3.50 USD |
-| Claude Sonnet (~5k tokens/day × 22 days) | ~$0.50 USD |
-| **Total** | **~$4 USD/month** |
+| Claude summary (~5k tokens/day × 22 days) | ~$0.50 USD |
+| Claude infographic (~6k tokens/day × 22 days) | ~$1.00 USD |
+| **Total** | **~$5 USD/month** |
 
 ---
 
 ## 11. Output example
 
 ```
-📻 財經皓角摘要 2026-03-28 — 2026/3/28(五)台股大跌...
+📻 財經皓角摘要 — 2026/3/28(五)台股大跌...
 
 1. 📌 今日重點
    • 台股因外資賣超跌破關鍵支撐...
@@ -215,3 +230,5 @@ With 1.25x speed-up and 48kbps compression applied before transcription:
 4. ⚠️ 需要關注
    • 下週FOMC會議...
 ```
+
+A 1080×1350px infographic is also generated and attached to the email.
