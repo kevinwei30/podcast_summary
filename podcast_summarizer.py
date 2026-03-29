@@ -48,12 +48,13 @@ except ImportError:
 
 RSS_FEED_URL = "https://feeds.soundcloud.com/users/soundcloud:users:735679489/sounds.rss"
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY")
-GMAIL_TO          = os.getenv("GMAIL_TO")
-GMAIL_FROM        = os.getenv("GMAIL_FROM")
+ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY")
+OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY")
+GMAIL_TO           = os.getenv("GMAIL_TO")           # comma-separated for multiple recipients
+GMAIL_FROM         = os.getenv("GMAIL_FROM")          # Gmail address used to authenticate
+GMAIL_DISPLAY_NAME = os.getenv("GMAIL_DISPLAY_NAME", "財經皓角摘要")  # sender display name
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
-SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
+SLACK_WEBHOOK_URL  = os.getenv("SLACK_WEBHOOK_URL")
 
 # How far back (in hours) to look for "today's" episode
 RECENCY_HOURS = 60
@@ -229,17 +230,18 @@ def send_email(subject: str, body: str):
     if not all([GMAIL_FROM, GMAIL_TO, GMAIL_APP_PASSWORD]):
         print("📧 Email skipped (GMAIL_* env vars not set)")
         return
-    print(f"📧 Sending email to {GMAIL_TO}…")
+    recipients = [r.strip() for r in GMAIL_TO.split(",")]
+    print(f"📧 Sending email to {', '.join(recipients)}…")
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"]    = GMAIL_FROM
-    msg["To"]      = GMAIL_TO
+    msg["From"]    = f"{GMAIL_DISPLAY_NAME} <{GMAIL_FROM}>"
+    msg["To"]      = ", ".join(recipients)
     html_body = body.replace("\n", "<br>")
     msg.attach(MIMEText(body, "plain", "utf-8"))
     msg.attach(MIMEText(f"<html><body style='font-family:sans-serif'>{html_body}</body></html>", "html", "utf-8"))
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(GMAIL_FROM, GMAIL_APP_PASSWORD)
-        server.sendmail(GMAIL_FROM, GMAIL_TO, msg.as_string())
+        server.sendmail(GMAIL_FROM, recipients, msg.as_string())
     print("   Email sent ✅")
 
 
@@ -275,7 +277,8 @@ class Tee:
     def close(self, final_path: Path = None):
         sys.stdout = self._stdout
         self._file.close()
-        if final_path and final_path != self._file.name:
+        if final_path and final_path != Path(self._file.name):
+            final_path.unlink(missing_ok=True)
             Path(self._file.name).rename(final_path)
 
 
@@ -284,6 +287,7 @@ class Tee:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--transcript", help="Path to existing transcript.txt to skip download/transcription")
+    parser.add_argument("--summary", help="Path to existing summary.txt to skip everything and just deliver")
     args = parser.parse_args()
 
     # Start logging — write to a temp file until we know the episode output folder
@@ -297,6 +301,25 @@ def main():
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
+    if args.summary:
+        # Deliver from existing summary — skip everything else
+        summary_path = Path(args.summary)
+        full_output = summary_path.read_text(encoding="utf-8")
+        # First line is the subject, rest is the body
+        lines = full_output.split("\n", 1)
+        subject = lines[0].strip()
+        summary = lines[1].strip() if len(lines) > 1 else full_output
+        out_dir = summary_path.parent
+        print(f"\n📄 Loaded summary from {summary_path}")
+        print("\n" + "─" * 60)
+        print(full_output)
+        print("─" * 60)
+        send_email(subject, summary)
+        send_slack(full_output)
+        print("\n✅ Done!")
+        tee.close(final_path=out_dir / "run.log")
+        return
+
     if args.transcript:
         # Resume from existing transcript
 
@@ -304,7 +327,14 @@ def main():
         transcript = transcript_path.read_text(encoding="utf-8")
         out_dir = transcript_path.parent
         date_str = out_dir.name
-        episode_title = date_str  # no RSS data available in this mode
+        # Try to recover episode title from existing summary.txt
+        existing_summary = out_dir / "summary.txt"
+        if existing_summary.exists():
+            first_line = existing_summary.read_text(encoding="utf-8").split("\n", 1)[0]
+            # Subject format: "📻 財經皓角摘要 YYYY-MM-DD — <title>"
+            episode_title = first_line.split(" — ", 1)[-1].strip() if " — " in first_line else date_str
+        else:
+            episode_title = date_str
         print(f"\n📄 Loaded transcript from {transcript_path} ({len(transcript)} chars)")
     else:
         # 1. Get latest episode
@@ -354,7 +384,7 @@ def main():
     summary = summarize(transcript, episode_title)
 
     # 5. Build output
-    subject = f"📻 財經皓角摘要 {date_str} — {episode_title}"
+    subject = f"📻 財經皓角摘要 — {episode_title}"
     full_output = f"{subject}\n\n{summary}"
 
     print("\n" + "─" * 60)
