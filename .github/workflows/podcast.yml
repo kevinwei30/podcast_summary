@@ -1,0 +1,32 @@
+name: Daily Podcast Summary
+
+on:
+  schedule:
+    - cron: '15 1 * * 1-5'  # 09:15 Asia/Taipei (UTC+8), Mon-Fri
+  workflow_dispatch:          # Allow manual trigger from GitHub UI
+
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install ffmpeg
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: pip install feedparser openai anthropic requests python-dotenv
+
+      - name: Run summarizer
+        run: python podcast_summarizer.py
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_FROM: ${{ secrets.GMAIL_FROM }}
+          GMAIL_TO: ${{ secrets.GMAIL_TO }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
