@@ -24,7 +24,7 @@ jobs:
         run: playwright install chromium
 
       - name: Run summarizer
-        run: python podcast_summarizer.py
+        run: python podcast_summarizer.py --verbose
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

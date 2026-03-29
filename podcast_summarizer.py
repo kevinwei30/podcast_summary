@@ -378,6 +378,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--transcript", help="Path to existing transcript.txt to skip download/transcription")
     parser.add_argument("--summary", help="Path to existing summary.txt to skip everything and just deliver")
+    parser.add_argument("--verbose", action="store_true", help="Print full summary to console (useful for CI logs)")
     args = parser.parse_args()
 
     # Start logging — write to a temp file until we know the episode output folder
@@ -457,10 +458,12 @@ def main():
         summary_out.write_text(full_output, encoding="utf-8")
         print(f"\n💾 Saved → {summary_out}")
 
-    preview = "\n".join(full_output.splitlines()[:10])
     print("\n" + "─" * 60)
-    print(preview)
-    print("…  (full summary saved to summary.txt)")
+    if args.verbose:
+        print(full_output)
+    else:
+        print("\n".join(full_output.splitlines()[:10]))
+        print("…  (full summary saved to summary.txt)")
     print("─" * 60)
 
     # ── Stage 3: infographic ─────────────────────────────────────────────────
