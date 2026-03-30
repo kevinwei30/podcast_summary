@@ -19,7 +19,7 @@ jobs:
           python3 --version
 
       - name: Install dependencies
-        run: pip3 install feedparser openai anthropic requests python-dotenv playwright
+        run: pip3 install feedparser openai anthropic requests python-dotenv playwright PyPTT
       - name: Install Playwright browser
         run: python3 -m playwright install chromium
 
@@ -33,3 +33,6 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GMAIL_DISPLAY_NAME: ${{ secrets.GMAIL_DISPLAY_NAME }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          PTT_ID: ${{ secrets.PTT_ID }}
+          PTT_PASSWORD: ${{ secrets.PTT_PASSWORD }}
+          PTT_BOARD: ${{ secrets.PTT_BOARD }}

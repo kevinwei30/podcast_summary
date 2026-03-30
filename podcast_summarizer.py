@@ -57,6 +57,9 @@ GMAIL_FROM         = os.getenv("GMAIL_FROM")          # Gmail address used to au
 GMAIL_DISPLAY_NAME = os.getenv("GMAIL_DISPLAY_NAME", "財經皓角摘要")  # sender display name
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 SLACK_WEBHOOK_URL  = os.getenv("SLACK_WEBHOOK_URL")
+PTT_ID             = os.getenv("PTT_ID")
+PTT_PASSWORD       = os.getenv("PTT_PASSWORD")
+PTT_BOARD          = os.getenv("PTT_BOARD", "Stock")  # default board
 
 # How far back (in hours) to look for "today's" episode
 RECENCY_HOURS = 30
@@ -335,6 +338,31 @@ def send_email(subject: str, body: str, image_path: Path = None):
     print("   Email sent ✅")
 
 
+def send_ptt(title: str, content: str):
+    if not all([PTT_ID, PTT_PASSWORD]):
+        print("📋 PTT skipped (PTT_ID / PTT_PASSWORD not set)")
+        return
+    try:
+        import PyPTT
+    except ImportError:
+        print("📋 PTT skipped (PyPTT not installed)")
+        return
+    print(f"📋 Posting to PTT/{PTT_BOARD}…")
+    try:
+        bot = PyPTT.API()
+        bot.login(PTT_ID, PTT_PASSWORD, kick_other_login=True)
+        bot.post(
+            board=PTT_BOARD,
+            title=title,
+            content=content,
+            sign_file=PyPTT.data_type.SignType.NoSigned,
+        )
+        bot.logout()
+        print("   PTT post sent ✅")
+    except Exception as e:
+        print(f"   PTT post failed: {e}")
+
+
 def send_slack(text: str):
     if not SLACK_WEBHOOK_URL:
         print("💬 Slack skipped (SLACK_WEBHOOK_URL not set)")
@@ -479,6 +507,9 @@ def main():
     # ── Stage 4: deliver ─────────────────────────────────────────────────────
     send_email(subject, summary, image_path=out_dir / "infographic.png")
     send_slack(full_output)
+    ptt_title = f"[情報] 財經皓角每日摘要 {date_str} — {episode_title}"
+    ptt_content = f"{summary}\n\n--\n本文由自動化程式整理自《游庭皓的財經皓角》Podcast"
+    send_ptt(ptt_title, ptt_content)
 
     total_cost = cost_transcribe + cost_summarize + cost_infographic
     print("\n" + "─" * 60)
