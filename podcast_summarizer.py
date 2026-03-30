@@ -176,7 +176,7 @@ def transcribe(audio_path: str) -> str:
     print(f"   Transcript length : {len(result)} chars")
     print(f"   Audio duration    : {duration_min:.1f} min")
     print(f"   Whisper cost      : ${cost_usd:.4f} USD")
-    return result
+    return result, cost_usd
 
 
 # ─── STEP 4: SUMMARIZE WITH CLAUDE ───────────────────────────────────────────
@@ -223,7 +223,7 @@ def summarize(transcript: str, episode_title: str) -> str:
     print(f"   Input tokens  : {input_tokens}")
     print(f"   Output tokens : {output_tokens}")
     print(f"   Claude cost   : ${cost_usd:.4f} USD")
-    return message.content[0].text
+    return message.content[0].text, cost_usd
 
 
 # ─── STEP 5: GENERATE INFOGRAPHIC ────────────────────────────────────────────
@@ -304,7 +304,7 @@ def generate_infographic(summary: str, episode_title: str, date_str: str, out_di
 
     size_kb = png_path.stat().st_size / 1024
     print(f"   Saved → {png_path} ({size_kb:.0f} KB)")
-    return png_path
+    return png_path, cost_usd
 
 
 # ─── STEP 5: DELIVER SUMMARY ─────────────────────────────────────────────────
@@ -392,6 +392,10 @@ def main():
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
+    cost_transcribe = 0.0
+    cost_summarize  = 0.0
+    cost_infographic = 0.0
+
     # ── Stage 1: resolve transcript, summary, episode metadata ──────────────
     if args.summary:
         summary_path = Path(args.summary)
@@ -441,7 +445,7 @@ def main():
             audio_out = out_dir / "audio_fast.mp3"
             Path(fast_path).rename(audio_out)
             print(f"   Saved → {audio_out}")
-            transcript = transcribe(str(audio_out))
+            transcript, cost_transcribe = transcribe(str(audio_out))
             transcript_out = out_dir / "transcript.txt"
             transcript_out.write_text(transcript, encoding="utf-8")
             print(f"   Saved → {transcript_out}")
@@ -451,7 +455,7 @@ def main():
 
     # ── Stage 2: summarize (skipped when resuming from --summary) ────────────
     if summary is None:
-        summary = summarize(transcript, episode_title)
+        summary, cost_summarize = summarize(transcript, episode_title)
         subject = f"📻 財經皓角摘要 — {episode_title}"
         full_output = f"{subject}\n\n{summary}"
         summary_out = out_dir / "summary.txt"
@@ -470,11 +474,21 @@ def main():
     if (out_dir / "infographic.png").exists():
         print("🎨 Infographic already exists, skipping generation.")
     else:
-        generate_infographic(summary, episode_title, date_str, out_dir)
+        _, cost_infographic = generate_infographic(summary, episode_title, date_str, out_dir)
 
     # ── Stage 4: deliver ─────────────────────────────────────────────────────
     send_email(subject, summary, image_path=out_dir / "infographic.png")
     send_slack(full_output)
+
+    total_cost = cost_transcribe + cost_summarize + cost_infographic
+    print("\n" + "─" * 60)
+    print("💰 Cost Summary")
+    print(f"   Transcribe   : ${cost_transcribe:.4f} USD")
+    print(f"   Summarize    : ${cost_summarize:.4f} USD")
+    print(f"   Infographic  : ${cost_infographic:.4f} USD")
+    print(f"   ─────────────────────────")
+    print(f"   Total        : ${total_cost:.4f} USD")
+    print("─" * 60)
 
     print("\n✅ Done!")
     tee.close(final_path=out_dir / "run.log")
