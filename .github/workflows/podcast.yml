@@ -36,3 +36,6 @@ jobs:
           PTT_ID: ${{ secrets.PTT_ID }}
           PTT_PASSWORD: ${{ secrets.PTT_PASSWORD }}
           PTT_BOARD: ${{ secrets.PTT_BOARD }}
+          IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}

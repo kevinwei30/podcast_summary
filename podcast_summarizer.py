@@ -60,6 +60,9 @@ SLACK_WEBHOOK_URL  = os.getenv("SLACK_WEBHOOK_URL")
 PTT_ID             = os.getenv("PTT_ID")
 PTT_PASSWORD       = os.getenv("PTT_PASSWORD")
 PTT_BOARD          = os.getenv("PTT_BOARD", "Podcast")  # default board
+IMGBB_API_KEY               = os.getenv("IMGBB_API_KEY")
+LINE_CHANNEL_ACCESS_TOKEN   = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+THREADS_ACCESS_TOKEN        = os.getenv("THREADS_ACCESS_TOKEN")
 
 # How far back (in hours) to look for "today's" episode
 RECENCY_HOURS = 30
@@ -363,6 +366,87 @@ def send_ptt(title: str, content: str):
         print(f"   PTT post failed: {e}")
 
 
+def upload_to_imgbb(image_path: Path) -> str | None:
+    """Upload image to imgbb and return the public URL, or None on failure."""
+    if not IMGBB_API_KEY:
+        print("🖼️  imgbb skipped (IMGBB_API_KEY not set)")
+        return None
+    import base64
+    print("🖼️  Uploading infographic to imgbb…")
+    with open(image_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    resp = requests.post(
+        "https://api.imgbb.com/1/upload",
+        data={"key": IMGBB_API_KEY, "image": b64},
+        timeout=30,
+    )
+    if resp.status_code == 200 and resp.json().get("success"):
+        url = resp.json()["data"]["url"]
+        print(f"   Uploaded → {url}")
+        return url
+    print(f"   imgbb upload failed (HTTP {resp.status_code}: {resp.text})")
+    return None
+
+
+def send_line(image_url: str | None, text: str):
+    if not LINE_CHANNEL_ACCESS_TOKEN:
+        print("💚 LINE skipped (LINE_CHANNEL_ACCESS_TOKEN not set)")
+        return
+    print("💚 Broadcasting to LINE…")
+    messages = []
+    if image_url:
+        messages.append({
+            "type": "image",
+            "originalContentUrl": image_url,
+            "previewImageUrl": image_url,
+        })
+    messages.append({"type": "text", "text": text[:5000]})
+    resp = requests.post(
+        "https://api.line.me/v2/bot/message/broadcast",
+        headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"},
+        json={"messages": messages},
+        timeout=15,
+    )
+    if resp.status_code == 200:
+        print("   LINE sent ✅")
+    else:
+        print(f"   LINE delivery failed (HTTP {resp.status_code}: {resp.text})")
+
+
+def send_threads(image_url: str | None, caption: str):
+    if not THREADS_ACCESS_TOKEN:
+        print("🧵 Threads skipped (THREADS_ACCESS_TOKEN not set)")
+        return
+    print("🧵 Posting to Threads…")
+    # Threads caption limit is 500 chars
+    truncated = caption[:497] + "…" if len(caption) > 500 else caption
+    try:
+        # Step 1: create media container
+        params = {"text": truncated, "access_token": THREADS_ACCESS_TOKEN}
+        if image_url:
+            params["media_type"] = "IMAGE"
+            params["image_url"] = image_url
+        else:
+            params["media_type"] = "TEXT"
+        r1 = requests.post(
+            "https://graph.threads.net/v1.0/me/threads",
+            params=params,
+            timeout=15,
+        )
+        r1.raise_for_status()
+        creation_id = r1.json()["id"]
+        # Step 2: publish
+        r2 = requests.post(
+            "https://graph.threads.net/v1.0/me/threads_publish",
+            params={"creation_id": creation_id, "access_token": THREADS_ACCESS_TOKEN},
+            timeout=15,
+        )
+        r2.raise_for_status()
+        print("   Threads post sent ✅")
+    except Exception as e:
+        print(f"   Threads post failed: {e}")
+
+
 def send_slack(text: str):
     if not SLACK_WEBHOOK_URL:
         print("💬 Slack skipped (SLACK_WEBHOOK_URL not set)")
@@ -505,8 +589,11 @@ def main():
         _, cost_infographic = generate_infographic(summary, episode_title, date_str, out_dir)
 
     # ── Stage 4: deliver ─────────────────────────────────────────────────────
+    image_url = upload_to_imgbb(out_dir / "infographic.png")
     send_email(subject, summary, image_path=out_dir / "infographic.png")
     send_slack(full_output)
+    send_line(image_url, full_output)
+    send_threads(image_url, summary)
     ptt_title = f"[心得] 財經皓角每日摘要 — {episode_title}"
     ptt_content = f"{summary}\n\n--\n本文由自動化程式整理自《游庭皓的財經皓角》Podcast"
     send_ptt(ptt_title, ptt_content)
