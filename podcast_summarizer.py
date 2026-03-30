@@ -59,7 +59,7 @@ GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 SLACK_WEBHOOK_URL  = os.getenv("SLACK_WEBHOOK_URL")
 PTT_ID             = os.getenv("PTT_ID")
 PTT_PASSWORD       = os.getenv("PTT_PASSWORD")
-PTT_BOARD          = os.getenv("PTT_BOARD", "Stock")  # default board
+PTT_BOARD          = os.getenv("PTT_BOARD", "Podcast")  # default board
 
 # How far back (in hours) to look for "today's" episode
 RECENCY_HOURS = 30
@@ -507,7 +507,7 @@ def main():
     # ── Stage 4: deliver ─────────────────────────────────────────────────────
     send_email(subject, summary, image_path=out_dir / "infographic.png")
     send_slack(full_output)
-    ptt_title = f"[情報] 財經皓角每日摘要 — {episode_title}"
+    ptt_title = f"[心得] 財經皓角每日摘要 — {episode_title}"
     ptt_content = f"{summary}\n\n--\n本文由自動化程式整理自《游庭皓的財經皓角》Podcast"
     send_ptt(ptt_title, ptt_content)
 
