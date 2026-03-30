@@ -9,14 +9,15 @@ jobs:
   summarize:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" .
 
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Install ffmpeg
-        run: sudo apt-get install -y ffmpeg
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3.11 python3.11-venv python3-pip ffmpeg
+          sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+          python --version
 
       - name: Install dependencies
         run: pip install feedparser openai anthropic requests python-dotenv playwright
