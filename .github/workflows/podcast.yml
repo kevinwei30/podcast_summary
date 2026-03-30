@@ -15,17 +15,16 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y python3.11 python3.11-venv python3-pip ffmpeg
-          sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
-          python --version
+          sudo apt-get install -y ffmpeg
+          python3 --version
 
       - name: Install dependencies
-        run: pip install feedparser openai anthropic requests python-dotenv playwright
+        run: pip3 install feedparser openai anthropic requests python-dotenv playwright
       - name: Install Playwright browser
-        run: playwright install chromium
+        run: python3 -m playwright install chromium
 
       - name: Run summarizer
-        run: python podcast_summarizer.py --verbose
+        run: python3 podcast_summarizer.py --verbose
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
