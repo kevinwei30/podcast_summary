@@ -7,7 +7,7 @@ except ImportError:
     pass
 
 RSS_FEED_URL = "https://feeds.soundcloud.com/users/soundcloud:users:735679489/sounds.rss"
-RECENCY_HOURS = 30
+RECENCY_HOURS = 20
 AUDIO_SPEED   = 1.25
 
 ANTHROPIC_API_KEY           = os.getenv("ANTHROPIC_API_KEY")
