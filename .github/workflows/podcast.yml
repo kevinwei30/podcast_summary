@@ -24,7 +24,7 @@ jobs:
         run: python3 -m playwright install chromium
 
       - name: Run summarizer
-        run: python3 podcast_summarizer.py --verbose
+        run: python3 podcast_summarizer.py --verbose --no-infographic
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -57,6 +57,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--transcript", help="Path to existing transcript.txt to skip download/transcription")
     parser.add_argument("--summary", help="Path to existing summary.txt to skip everything and just deliver")
+    parser.add_argument("--no-infographic", action="store_true", help="Skip infographic generation")
     parser.add_argument("--verbose", action="store_true", help="Print full summary to console (useful for CI logs)")
     args = parser.parse_args()
 
@@ -148,14 +149,17 @@ def main():
     print("─" * 60)
 
     # ── Stage 3: infographic ─────────────────────────────────────────────────
-    if (out_dir / "infographic.png").exists():
+    if args.no_infographic:
+        print("🎨 Infographic skipped (--no-infographic).")
+    elif (out_dir / "infographic.png").exists():
         print("🎨 Infographic already exists, skipping generation.")
     else:
         _, cost_infographic = generate_infographic(summary, episode_title, date_str, out_dir)
 
     # ── Stage 4: deliver ─────────────────────────────────────────────────────
-    image_url = upload_to_imgbb(out_dir / "infographic.png")
-    send_email(subject, summary, image_path=out_dir / "infographic.png")
+    infographic_path = out_dir / "infographic.png"
+    image_url = None if args.no_infographic else upload_to_imgbb(infographic_path)
+    send_email(subject, summary, image_path=None if args.no_infographic else infographic_path)
     send_slack(full_output)
     send_line(image_url, full_output)
     send_threads(image_url, summary)
