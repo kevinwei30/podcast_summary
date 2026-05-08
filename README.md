@@ -84,6 +84,15 @@ python podcast_summarizer.py --transcript output/2026-03-27/transcript.txt
 python podcast_summarizer.py --summary output/2026-03-27/summary.txt
 ```
 
+### CLI arguments
+
+| Argument | Description |
+|----------|-------------|
+| `--transcript <path>` | Load an existing `transcript.txt`; skips RSS fetch, download, and Whisper transcription |
+| `--summary <path>` | Load an existing `summary.txt`; skips everything and goes straight to delivery |
+| `--no-infographic` | Skip infographic generation; all channels receive text-only (no image attached or uploaded) |
+| `--verbose` | Print the full summary to the console instead of truncating at 10 lines (useful in CI logs) |
+
 > The infographic is only generated once per episode. If `infographic.png` already exists in the output folder, it is reused — no extra API cost.
 
 ---
